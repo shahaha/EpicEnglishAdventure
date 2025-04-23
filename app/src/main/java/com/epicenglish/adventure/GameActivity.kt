@@ -625,8 +625,14 @@ class GameActivity : AppCompatActivity(), CoroutineScope by MainScope() {
      */
     private fun updatePlayerUI() {
         currentPlayer?.let { player ->
-            playerNameTextView.text = player.name
+            playerNameTextView.text = "${player.name} Lv.${player.level}"
             playerHealthTextView.text = "HP: ${player.current_hp}/${player.max_hp}"
+            
+            // 计算当前等级所需经验值
+            val expNeeded = (100 * Math.pow(1.3, player.level.toDouble() - 1)).toInt()
+            // 添加经验值显示
+            val expTextView = findViewById<TextView>(R.id.playerExpTextView)
+            expTextView.text = "EXP: ${player.exp}/$expNeeded"
         }
     }
 
@@ -1280,22 +1286,32 @@ class GameActivity : AppCompatActivity(), CoroutineScope by MainScope() {
      * 检查是否升级
      */
     private fun checkLevelUp(player: Player) {
-        val expNeeded = player.level * 100 // 简单的经验计算公式
+        // 使用更合理的经验计算公式：基础100经验，每级递增30%
+        val baseExp = 100
+        val expNeeded = (baseExp * Math.pow(1.3, player.level.toDouble() - 1)).toInt()
         
         if (player.exp >= expNeeded) {
-            player.level++
+            // 扣除升级所需经验值，保留剩余经验
             player.exp -= expNeeded
-            player.max_hp += 20
-            player.current_hp = player.max_hp
-            player.attack += 5
-            player.defense += 3
+            player.level++
+            
+            // 属性提升也采用非线性增长
+            val hpIncrease = 15 + (player.level / 5) * 5  // 基础+15，每5级额外+5
+            val attackIncrease = 3 + (player.level / 10) * 2  // 基础+3，每10级额外+2
+            val defenseIncrease = 2 + (player.level / 10)  // 基础+2，每10级额外+1
+            
+            player.max_hp += hpIncrease
+            player.current_hp = player.max_hp  // 升级时恢复满血
+            player.attack += attackIncrease
+            player.defense += defenseIncrease
             
             // 在主线程通知玩家升级
             MainScope().launch {
                 logGameEvent("恭喜！你升级了！现在是 ${player.level} 级。")
-                logGameEvent("你的生命值提升至 ${player.max_hp}")
-                logGameEvent("你的攻击力提升至 ${player.attack}")
-                logGameEvent("你的防御力提升至 ${player.defense}")
+                logGameEvent("生命值提升：+$hpIncrease (当前 ${player.max_hp})")
+                logGameEvent("攻击力提升：+$attackIncrease (当前 ${player.attack})")
+                logGameEvent("防御力提升：+$defenseIncrease (当前 ${player.defense})")
+                logGameEvent("下一级需要 ${calculateNextLevelExp(player.level)} 经验")
                 
                 Toast.makeText(this@GameActivity, "恭喜！你升级了！", Toast.LENGTH_LONG).show()
             }
@@ -1306,95 +1322,123 @@ class GameActivity : AppCompatActivity(), CoroutineScope by MainScope() {
                 checkAchievement("达到等级10", if (player.level >= 10) 100 else player.level * 10, player.player_id)
                 checkAchievement("达到等级20", if (player.level >= 20) 100 else player.level * 5, player.player_id)
             }
+            
+            // 如果还有足够经验继续升级，递归检查
+            if (player.exp >= calculateNextLevelExp(player.level)) {
+                checkLevelUp(player)
+            }
         }
+    }
+    
+    /**
+     * 计算下一级所需经验值
+     */
+    private fun calculateNextLevelExp(level: Int): Int {
+        val baseExp = 100
+        return (baseExp * Math.pow(1.3, level.toDouble() - 1)).toInt()
     }
 
     /**
-     * 探索区域
+     * 计算战斗胜利获得的经验值
      */
-    private fun exploreArea() {
-        try {
-            // 检查玩家健康状态
-            if (currentPlayer?.current_hp ?: 0 <= 0) {
-                Toast.makeText(this, "你已经失去了战斗能力，需要恢复健康才能探索", Toast.LENGTH_SHORT).show()
-                return
-            }
-            
-            // 创建一个加载对话框
-            val loadingDialog = AlertDialog.Builder(this)
-                .setMessage("正在探索区域...")
-                .setCancelable(false)
-                .create()
-            loadingDialog.show()
-            
-            // 计算当前节点的连接数
-            launch {
-                try {
-                    val currentNodeId = currentNode?.node_id ?: return@launch
-                    val connections = nodeConnectionDao.findConnectionsFromNode(currentNodeId)
-                    val connectionCount = connections.size
+    private fun calculateBattleExp(monster: Monster, playerLevel: Int): Int {
+        // 基础经验值：怪物等级 * 15
+        var expReward = monster.level * 15
+        
+        // 根据怪物难度增加经验值
+        val difficultyMultiplier = when (monster.difficulty) {
+            "EASY" -> 0.8
+            "NORMAL" -> 1.0
+            "HARD" -> 1.3
+            "ELITE" -> 1.8
+            else -> 1.0
+        }
+        expReward = (expReward * difficultyMultiplier).toInt()
+        
+        // 根据等级差异调整经验值
+        val levelDiff = monster.level - playerLevel
+        val levelMultiplier = when {
+            levelDiff >= 5 -> 1.5  // 击败高于自己5级以上的怪物，获得50%额外经验
+            levelDiff >= 3 -> 1.3  // 击败高于自己3-4级的怪物，获得30%额外经验
+            levelDiff >= 1 -> 1.1  // 击败高于自己1-2级的怪物，获得10%额外经验
+            levelDiff <= -5 -> 0.3 // 击败低于自己5级以上的怪物，经验减少70%
+            levelDiff <= -3 -> 0.5 // 击败低于自己3-4级的怪物，经验减少50%
+            levelDiff <= -1 -> 0.8 // 击败低于自己1-2级的怪物，经验减少20%
+            else -> 1.0           // 同等级怪物，正常经验
+        }
+        expReward = (expReward * levelMultiplier).toInt()
+        
+        // 添加随机波动（±15%）
+        val variation = expReward * 0.15
+        expReward += Random.nextInt((-variation).toInt(), variation.toInt() + 1)
+        
+        // 确保最少获得1点经验
+        return maxOf(1, expReward)
+    }
+    
+    /**
+     * 处理战斗胜利
+     */
+    private fun handleBattleVictory(monster: Monster) {
+        launch {
+            try {
+                currentPlayer?.let { player ->
+                    // 计算经验和金币奖励
+                    val expGained = calculateBattleExp(monster, player.level)
+                    val goldGained = calculateBattleGold(monster, player.level)
                     
-                    // 根据连接数调整概率
-                    // 最大可能的连接数是8（八个方向）
-                    val maxConnections = 8
-                    val remainingConnections = maxConnections - connectionCount
-                    
-                    // 计算新路径的基础概率（连接越少，概率越高）
-                    // 当没有连接时，新路径概率为75%
-                    // 当连接数达到最大时，新路径概率为15%
-                    val newPathBaseProb = (remainingConnections.toFloat() / maxConnections * 60 + 15).toInt()
-                    
-                    // 其他事件的概率相应调整
-                    val enemyProb = (50 * (connectionCount.toFloat() / maxConnections)).toInt() + 20  // 最低20%，最高70%
-                    val treasureProb = 10  // 保持不变
-                    val eventProb = 15     // 保持不变
-                    
-                    // 使用Handler在主线程更新UI
-                    Handler(Looper.getMainLooper()).postDelayed({
-                        loadingDialog.dismiss()
+                    withContext(Dispatchers.IO) {
+                        player.exp += expGained
+                        player.gold += goldGained
                         
-                        // 随机确定探索结果
-                        val exploreResult = Random.nextInt(100)
+                        // 检查是否升级
+                        checkLevelUp(player)
                         
-                        when {
-                            // 遇到敌人
-                            exploreResult < enemyProb -> {
-                                encounterEnemy()
-                            }
-                            // 发现宝藏
-                            exploreResult < enemyProb + treasureProb -> {
-                                findTreasure()
-                            }
-                            // 发现事件
-                            exploreResult < enemyProb + treasureProb + eventProb -> {
-                                discoveryEvent()
-                            }
-                            // 找到新路径
-                            else -> {
-                                findNewPath()
-                            }
-                        }
-                        
-                        // 更新UI
-                        loadAndDisplayNodeContent()
-                        
-                    }, 500) // 0.5秒的探索时间
+                        playerDao.update(player)
+                    }
                     
-                } catch (e: Exception) {
-                    Log.e(TAG, "获取节点连接数时出错: ${e.message}")
-                    loadingDialog.dismiss()
-                    runOnUiThread {
-                        Toast.makeText(this@GameActivity, "探索区域时出错", Toast.LENGTH_SHORT).show()
+                    withContext(Dispatchers.Main) {
+                        logGameEvent("你赢得了战斗！")
+                        logGameEvent("获得 $expGained 点经验")
+                        logGameEvent("获得 $goldGained 金币")
+                        updatePlayerUI()
                     }
                 }
+                
+            } catch (e: Exception) {
+                Log.e(TAG, "处理战斗奖励时出错: ${e.message}")
+                withContext(Dispatchers.Main) {
+                    Toast.makeText(this@GameActivity, "获取奖励失败", Toast.LENGTH_SHORT).show()
+                }
             }
-            
-        } catch (e: Exception) {
-            Log.e(TAG, "探索区域时出错: ${e.message}")
-            Toast.makeText(this, "探索区域时出错", Toast.LENGTH_SHORT).show()
         }
     }
-
+    
+    /**
+     * 计算战斗胜利获得的金币
+     */
+    private fun calculateBattleGold(monster: Monster, playerLevel: Int): Int {
+        // 基础金币：怪物等级 * 8
+        var goldReward = monster.level * 8
+        
+        // 根据怪物难度增加金币
+        val difficultyMultiplier = when (monster.difficulty) {
+            "EASY" -> 0.8
+            "NORMAL" -> 1.0
+            "HARD" -> 1.4
+            "ELITE" -> 2.0
+            else -> 1.0
+        }
+        goldReward = (goldReward * difficultyMultiplier).toInt()
+        
+        // 添加随机波动（±20%）
+        val variation = goldReward * 0.2
+        goldReward += Random.nextInt((-variation).toInt(), variation.toInt() + 1)
+        
+        // 确保最少获得1金币
+        return maxOf(1, goldReward)
+    }
+    
     /**
      * 遇到敌人
      */
@@ -1415,10 +1459,24 @@ class GameActivity : AppCompatActivity(), CoroutineScope by MainScope() {
                 
                 // 计算敌人属性（基于玩家等级）
                 val playerLevel = currentPlayer?.level ?: 1
-                val enemyLevel = playerLevel + Random.nextInt(-1, 2)
-                val enemyHp = enemyLevel * 10 + Random.nextInt(7, 15)
-                val enemyAttack = enemyLevel * 3 + Random.nextInt(1, 4)
-                val enemyDefense = enemyLevel + Random.nextInt(0, 2)
+                // 敌人等级浮动范围随玩家等级提升
+                val levelVariation = (playerLevel / 5) + 1
+                val enemyLevel = playerLevel + Random.nextInt(-levelVariation, levelVariation + 1)
+                
+                // 生命值采用指数增长，并加入更多随机性
+                val baseHp = 15 + (enemyLevel * enemyLevel * 2.5).toInt()
+                val hpVariation = (baseHp * 0.2).toInt()
+                val enemyHp = baseHp + Random.nextInt(-hpVariation, hpVariation + 1)
+                
+                // 攻击力与等级的关系更加显著，并提供更大的随机范围
+                val baseAttack = 5 + (enemyLevel * 2.5).toInt()
+                val attackVariation = (baseAttack * 0.3).toInt()
+                val enemyAttack = baseAttack + Random.nextInt(-attackVariation, attackVariation + 1)
+                
+                // 防御力采用开方增长，确保其效果随等级提升而显著
+                val baseDefense = 2 + kotlin.math.sqrt(enemyLevel.toDouble() * 3).toInt()
+                val defenseVariation = (baseDefense * 0.2).toInt()
+                val enemyDefense = baseDefense + Random.nextInt(-defenseVariation, defenseVariation + 1)
                 
                 // 根据等级决定难度
                 val difficulty = when {
@@ -1825,45 +1883,6 @@ class GameActivity : AppCompatActivity(), CoroutineScope by MainScope() {
         }
     }
 
-    /**
-     * 处理战斗胜利
-     */
-    private fun handleBattleVictory(monster: Monster) {
-        launch {
-            try {
-                // 获取奖励
-                val expGained = monster.exp_reward
-                val goldGained = monster.gold_reward
-                
-                // 更新玩家数据
-                currentPlayer?.let { player ->
-                    withContext(Dispatchers.IO) {
-                        player.exp += expGained
-                        player.gold += goldGained
-                        
-                        // 检查是否升级
-                        checkLevelUp(player)
-                        
-                        playerDao.update(player)
-                    }
-                    
-                    withContext(Dispatchers.Main) {
-                        logGameEvent("你赢得了战斗！")
-                        logGameEvent("获得 $expGained 点经验")
-                        logGameEvent("获得 $goldGained 金币")
-                        updatePlayerUI()
-                    }
-                }
-                
-            } catch (e: Exception) {
-                Log.e(TAG, "处理战斗奖励时出错: ${e.message}")
-                withContext(Dispatchers.Main) {
-                    Toast.makeText(this@GameActivity, "获取奖励失败", Toast.LENGTH_SHORT).show()
-                }
-            }
-        }
-    }
-    
     /**
      * 处理战斗失败
      */
@@ -2683,6 +2702,92 @@ class GameActivity : AppCompatActivity(), CoroutineScope by MainScope() {
                 Log.e(TAG, "显示问题对话框失败: ${e.message}")
                 continuation.resume("")
             }
+        }
+    }
+
+    /**
+     * 探索区域
+     */
+    private fun exploreArea() {
+        try {
+            // 检查玩家健康状态
+            if (currentPlayer?.current_hp ?: 0 <= 0) {
+                Toast.makeText(this, "你已经失去了战斗能力，需要恢复健康才能探索", Toast.LENGTH_SHORT).show()
+                return
+            }
+            
+            // 创建一个加载对话框
+            val loadingDialog = AlertDialog.Builder(this)
+                .setMessage("正在探索区域...")
+                .setCancelable(false)
+                .create()
+            loadingDialog.show()
+            
+            // 计算当前节点的连接数
+            launch {
+                try {
+                    val currentNodeId = currentNode?.node_id ?: return@launch
+                    val connections = nodeConnectionDao.findConnectionsFromNode(currentNodeId)
+                    val connectionCount = connections.size
+                    
+                    // 根据连接数调整概率
+                    // 最大可能的连接数是8（八个方向）
+                    val maxConnections = 8
+                    val remainingConnections = maxConnections - connectionCount
+                    
+                    // 计算新路径的基础概率（连接越少，概率越高）
+                    // 当没有连接时，新路径概率为75%
+                    // 当连接数达到最大时，新路径概率为15%
+                    val newPathBaseProb = (remainingConnections.toFloat() / maxConnections * 60 + 15).toInt()
+                    
+                    // 其他事件的概率相应调整
+                    val enemyProb = (50 * (connectionCount.toFloat() / maxConnections)).toInt() + 20  // 最低20%，最高70%
+                    val treasureProb = 10  // 保持不变
+                    val eventProb = 15     // 保持不变
+                    
+                    // 使用Handler在主线程更新UI
+                    Handler(Looper.getMainLooper()).postDelayed({
+                        loadingDialog.dismiss()
+                        
+                        // 随机确定探索结果
+                        val exploreResult = Random.nextInt(100)
+                        
+                        when {
+                            // 遇到敌人
+                            exploreResult < enemyProb -> {
+                                encounterEnemy()
+                            }
+                            // 发现宝藏
+                            exploreResult < enemyProb + treasureProb -> {
+                                findTreasure()
+                            }
+                            // 发现事件
+                            exploreResult < enemyProb + treasureProb + eventProb -> {
+                                discoveryEvent()
+                            }
+                            // 找到新路径
+                            else -> {
+                                findNewPath()
+                            }
+                        }
+                        
+                        // 更新UI
+                        loadAndDisplayNodeContent()
+                        
+                    }, 500) // 0.5秒的探索时间
+                    
+                } catch (e: Exception) {
+                    Log.e(TAG, "获取节点连接数时出错: ${e.message}")
+                    loadingDialog.dismiss()
+                    runOnUiThread {
+                        Toast.makeText(this@GameActivity, "探索区域时出错", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            }
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "探索区域时出错: ${e.message}")
+            Toast.makeText(this, "探索区域时出错", Toast.LENGTH_SHORT).show()
         }
     }
 } 

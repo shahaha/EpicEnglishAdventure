@@ -14,22 +14,40 @@
         android:layout_alignParentTop="true"
         android:layout_marginBottom="8dp">
 
-        <TextView
-            android:id="@+id/playerNameTextView"
+        <LinearLayout
+            android:id="@+id/playerInfoLayout"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="@string/player_placeholder"
-            android:textSize="16sp" />
+            android:padding="8dp"
+            android:background="@drawable/panel_background">
 
-        <TextView
-            android:id="@+id/playerHealthTextView"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text="@string/health_placeholder"
-            android:textSize="16sp"
-            android:layout_marginStart="16dp" />
-            
+            <TextView
+                android:id="@+id/playerNameTextView"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:textSize="18sp"
+                android:textStyle="bold"
+                android:text="@string/player_name_placeholder" />
+
+            <TextView
+                android:id="@+id/playerHealthTextView"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:textColor="#FF4444"
+                android:text="HP: 100/100" />
+
+            <TextView
+                android:id="@+id/playerExpTextView"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:textColor="#44FF44"
+                android:text="EXP: 0/100" />
+
+        </LinearLayout>
+
         <Button
             android:id="@+id/menuButton"
             android:layout_width="wrap_content"
